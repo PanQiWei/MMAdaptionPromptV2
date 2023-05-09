@@ -1,4 +1,4 @@
-# MMPromptAdaptionV2
+# MMAdaptionPromptV2
 an attempt to implement multi-modal llama-adapter-v2 that compatible with more other models.
 
 ## Notes
