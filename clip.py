@@ -46,8 +46,7 @@ class ClipAdaptionPromptV2ForMultiModalConditionalGeneration(nn.Module):
         return self.get_language_model_input_embeddings()(input_ids)
 
     def get_image_input_features(self, pixel_values: torch.FloatTensor):
-        pooled_output = self.vision_model(pixel_values)[1].unsqueeze(1)
-        return self.visual_projection(pooled_output)
+        return self.visual_projection(self.vision_model(pixel_values)[1].unsqueeze(1))
 
     def forward(
         self,
@@ -64,11 +63,18 @@ class ClipAdaptionPromptV2ForMultiModalConditionalGeneration(nn.Module):
             inputs_embeds = self.get_text_input_features(input_ids)
         if pixel_values is not None:
             if image_embeds is None:
-                inputs_embeds = inputs_embeds + self.get_image_input_features(pixel_values)
+                image_embeds = self.get_image_input_features(pixel_values)
             else:
                 if len(image_embeds.shape) == 2:
                     image_embeds = image_embeds.unsqueeze(1)
-                inputs_embeds = inputs_embeds + self.visual_projection(image_embeds)
+            image_embeds = image_embeds.type_as(inputs_embeds)
+            image_attention_mask = torch.ones(image_embeds.size()[:-1], dtype=torch.long, device=image_embeds.device)
+            inputs_embeds = torch.cat([image_embeds, inputs_embeds], dim=1)
+            if attention_mask is None:
+                attention_mask = torch.ones_like(input_ids).to(image_embeds.device)
+            attention_mask = torch.cat([image_attention_mask, attention_mask], dim=1)
+            if labels is not None:
+                labels = torch.cat([image_attention_mask * -100, labels], dim=1)
 
         if train_mode:
             self.language_model.freeze_adaption_params(pixel_values is not None)
@@ -99,7 +105,11 @@ class ClipAdaptionPromptV2ForMultiModalConditionalGeneration(nn.Module):
         text_embeds = self.get_text_input_features(inputs["input_ids"])
         inputs["inputs_embeds"] = text_embeds
         if pixel_values is not None:
-            inputs["inputs_embeds"] += self.get_image_input_features(pixel_values)
+            image_embeds = self.get_image_input_features(pixel_values)
+            image_embeds = image_embeds.type_as(text_embeds)
+            image_attention_mask = torch.ones(image_embeds.size()[:-1], dtype=torch.long, device=image_embeds.device)
+            inputs["inputs_embeds"] = torch.cat([image_embeds, text_embeds], dim=1)
+            inputs["attention_mask"] = torch.cat([image_attention_mask, inputs["attention_mask"]], dim=1)
         inputs["input_ds"] = None
 
         return inputs
