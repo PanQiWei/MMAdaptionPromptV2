@@ -1,0 +1,3 @@
+http://images.cocodataset.org/zips/train2014.zip -> train2014.zip
+http://images.cocodataset.org/zips/val2014.zip -> val2014.zip
+https://cs.stanford.edu/people/karpathy/deepimagesent/caption_datasets.zip -> caption_datasets.zip
