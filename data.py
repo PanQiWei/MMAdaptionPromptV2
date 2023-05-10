@@ -224,7 +224,8 @@ def build_image_caption_dataset(
     add_eos_token: bool = False,
     seed: int = 1024,
     num_train_samples: int = 50000,
-    num_eval_samples: int = 5000
+    num_eval_samples: int = 5000,
+    for_inference: bool = False,
 ):
     random.seed(seed)
 
@@ -268,7 +269,7 @@ def build_image_caption_dataset(
             "block_max_len": block_max_len,
             "add_eos_token": add_eos_token,
             "truncate_prompt": False,
-            "merge_prompt_label": True
+            "merge_prompt_label": not for_inference
         }
     )
     validation_ds = validation_ds.map(
@@ -289,7 +290,7 @@ def build_image_caption_dataset(
             "block_max_len": block_max_len,
             "add_eos_token": add_eos_token,
             "truncate_prompt": False,
-            "merge_prompt_label": True
+            "merge_prompt_label": not for_inference
         }
     )
 
@@ -311,7 +312,8 @@ def build_instruction_following_dataset(
     use_fast_tokenizer: bool = False,
     seed: int = 1024,
     num_train_blocks: int = 10000,
-    num_eval_blocks: int = 1000
+    num_eval_blocks: int = 1000,
+    for_inference: bool = False
 ):
     random.seed(seed)
 
@@ -358,7 +360,7 @@ def build_instruction_following_dataset(
             "block_max_len": block_max_len,
             "add_eos_token": add_eos_token,
             "truncate_prompt": False,
-            "merge_prompt_label": True
+            "merge_prompt_label": not for_inference
         }
     )
 
@@ -396,7 +398,8 @@ def build_dataset(
     num_image_caption_train_samples: int = 50000,
     num_image_caption_eval_samples: int = 5000,
     num_instruction_following_train_blocks: int = 10000,
-    num_instruction_following_eval_blocks: int = 1000
+    num_instruction_following_eval_blocks: int = 1000,
+    for_inference: bool = False
 ):
     image_caption_train_ds, image_caption_validation_ds = build_image_caption_dataset(
         pretrained_language_model_name_or_path=pretrained_language_model_name_or_path,
@@ -413,7 +416,8 @@ def build_dataset(
         add_eos_token=add_eos_token,
         seed=seed,
         num_train_samples=num_image_caption_train_samples,
-        num_eval_samples=num_image_caption_eval_samples
+        num_eval_samples=num_image_caption_eval_samples,
+        for_inference=for_inference
     )
     instruction_following_train_ds, instruction_following_validation_ds = build_instruction_following_dataset(
         pretrained_model_name_or_path=pretrained_language_model_name_or_path,
@@ -428,14 +432,11 @@ def build_dataset(
         use_fast_tokenizer=use_fast_tokenizer,
         seed=seed,
         num_train_blocks=num_instruction_following_train_blocks,
-        num_eval_blocks=num_instruction_following_eval_blocks
+        num_eval_blocks=num_instruction_following_eval_blocks,
+        for_inference=for_inference
     )
 
     train_ds = concatenate_datasets([image_caption_train_ds, instruction_following_train_ds]).shuffle(seed=seed)
     validation_ds = concatenate_datasets([image_caption_validation_ds, instruction_following_validation_ds])
 
     return train_ds, validation_ds
-
-
-if __name__ == "__main__":
-    pass
