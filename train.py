@@ -9,8 +9,6 @@ from data import build_dataset, collate_data
 from peft import AdaptionPromptV2Config, TaskType, PeftType
 from transformers import AutoProcessor, AutoTokenizer, Trainer, TrainingArguments
 
-from torch.utils.data import DataLoader
-
 
 def train():
     parser = ArgumentParser()
@@ -59,14 +57,19 @@ def train():
         pretrained_vision_model_name_or_path=pretrained_vision_model_name_or_path,
         tokenizer=tokenizer,
         processor=processor,
+        chat_utterance_max_num=20,
         image_caption_sample_max_len=128,
         image_caption_block_max_len=192,
         instruction_following_sample_max_len=1024,
         instruction_following_block_max_len=1024,
-        num_image_caption_train_samples=50000,
+        chat_sample_max_len=1024,
+        chat_block_max_len=1024,
+        num_image_caption_train_samples=100000,
         num_image_caption_eval_samples=5000,
         num_instruction_following_train_blocks=50000,
-        num_instruction_following_eval_blocks=5000
+        num_instruction_following_eval_blocks=5000,
+        num_chat_train_blocks=50000,
+        num_chat_eval_blocks=5000,
     )
     print("preparing model...")
     model = ClipAdaptionPromptV2ForMultiModalConditionalGeneration.build_model_for_train(

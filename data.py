@@ -209,14 +209,38 @@ def load_gpt4llm():
     return ds
 
 
+def load_dolly():
+    with open("datasets/dolly/databriks_dolly_15k.json", "r", encoding="utf-8") as f:
+        raw_data = json.load(f)
+
+    def gen_fn():
+        return raw_data
+
+    ds = Dataset.from_generator(gen_fn, keep_in_memory=True)
+    ds.cleanup_cache_files()
+    return ds
+
+
+def load_baize_chat():
+    with open("datasets/baize_chat/baize_chat_quora.json", "r", encoding="utf-8") as f:
+        raw_data = json.load(f)
+
+    def gen_fn():
+        return raw_data
+
+    ds = Dataset.from_generator(gen_fn, keep_in_memory=True)
+    ds.cleanup_cache_files()
+    return ds
+
+
 def build_image_caption_dataset(
     pretrained_vision_model_name_or_path=None,
     pretrained_language_model_name_or_path=None,
     processor=None,
     tokenizer=None,
     use_fast_tokenizer: bool = False,
-    instruction_prefix: str = "Instruction: ",
-    output_prefix: str = "Output: ",
+    instruction_prefix: str = "<|SYSTEM|> ",
+    output_prefix: str = "<|ASSISTANT|> ",
     spliter: str = "\n\n",
     instruction: str = "describe the image",
     sample_max_len: int = 256,
@@ -302,9 +326,10 @@ def build_image_caption_dataset(
 def build_instruction_following_dataset(
     pretrained_model_name_or_path=None,
     tokenizer=None,
-    instruction_prefix: str = "Instruction: ",
-    input_prefix: str = "Input: ",
-    output_prefix: str = "Output: ",
+    instruction_prefix: str = "<|SYSTEM|> ",
+    input_prefix: str = "<|USER|> ",
+    output_prefix: str = "<|ASSISTANT|> ",
+    task_type_prefix: Optional[str] = None,
     spliter: str = "\n\n",
     sample_max_len: int = 1024,
     block_max_len: int = 1024,
@@ -321,16 +346,19 @@ def build_instruction_following_dataset(
         instruction_data = examples["instruction"]
         input_data = examples["input"]
         output_data = examples["output"]
+        task_type_data = examples.get("task_type", [None for _ in range(len(instruction_data))])
 
         new_examples = {
             "input": [],
             "output": []
         }
-        for instruction, input_, output in zip(instruction_data, input_data, output_data):
+        for instruction, input_, output, task_type in zip(instruction_data, input_data, output_data, task_type_data):
             new_input = instruction_prefix + instruction + spliter
             if input_:
                 new_input += input_prefix + input_ + spliter
             new_input += output_prefix
+            if task_type and task_type_prefix:
+                new_input = task_type_prefix + task_type + spliter + new_input
             new_examples["input"].append(new_input)
             new_examples["output"].append(output)
 
@@ -341,7 +369,133 @@ def build_instruction_following_dataset(
         if not tokenizer.pad_token_id:
             tokenizer.pad_token_id = tokenizer.eos_token_id
 
-    ds = load_gpt4llm()
+    ds_gpt4llm = load_gpt4llm()
+    ds_dolly = load_dolly()
+    n_proc = cpu_count() - 2
+    ds_gpt4llm = ds_gpt4llm.map(
+        make_data_block,
+        batched=True,
+        batch_size=min(1000, len(ds_gpt4llm) // n_proc),
+        num_proc=n_proc,
+        remove_columns=ds_gpt4llm.column_names,
+        keep_in_memory=True,
+        load_from_cache_file=False,
+        fn_kwargs={
+            "prompt_col_name": "input",
+            "label_col_name": "output",
+            "tokenizer": tokenizer,
+            "preprocess_fn": preprocess_fn,
+            "sample_max_len": sample_max_len,
+            "block_max_len": block_max_len,
+            "add_eos_token": add_eos_token,
+            "truncate_prompt": False,
+            "merge_prompt_label": not for_inference
+        }
+    )
+    ds_dolly = ds_dolly.map(
+        make_data_block,
+        batched=True,
+        batch_size=min(1000, len(ds_dolly) // n_proc),
+        num_proc=n_proc,
+        remove_columns=ds_dolly.column_names,
+        keep_in_memory=True,
+        load_from_cache_file=False,
+        fn_kwargs={
+            "prompt_col_name": "input",
+            "label_col_name": "output",
+            "tokenizer": tokenizer,
+            "preprocess_fn": preprocess_fn,
+            "sample_max_len": sample_max_len,
+            "block_max_len": block_max_len,
+            "add_eos_token": add_eos_token,
+            "truncate_prompt": False,
+            "merge_prompt_label": not for_inference
+        }
+    )
+    ds = concatenate_datasets([ds_gpt4llm, ds_dolly])
+    split_ds = ds.train_test_split(test_size=len(ds) // 10, seed=seed)
+    train_ds, validation_ds = split_ds["train"], split_ds["test"]
+    train_ds = train_ds.select(
+        indices=random.sample(list(range(len(train_ds))), k=min(len(train_ds), num_train_blocks)),
+        keep_in_memory=True
+    )
+    validation_ds = validation_ds.select(
+        indices=random.sample(list(range(len(validation_ds))), k=min(len(validation_ds), num_eval_blocks)),
+        keep_in_memory=True
+    )
+
+    return train_ds, validation_ds
+
+
+def build_baize_chat_dataset(
+    pretrained_model_name_or_path=None,
+    tokenizer=None,
+    spliter: str = "\n\n",
+    max_utterances: int = 20,
+    instruction_prefix: str = "<|SYSTEM|> ",
+    input_prefix: str = "<|USER|> ",
+    output_prefix: str = "<|ASSISTANT|> ",
+    sample_max_len: int = 1024,
+    block_max_len: int = 1024,
+    add_eos_token: bool = False,
+    use_fast_tokenizer: bool = False,
+    seed: int = 1024,
+    num_train_blocks: int = 10000,
+    num_eval_blocks: int = 1000,
+    for_inference: bool = False
+):
+    human_symbol = "[|Human|]"
+    ai_symbol = "[|AI|]"
+    bkg_template = (
+        "I want you to be an AI Assistant. You are very helpful and polite. "
+        "You are now talking with a Human about {topic}"
+    )
+
+    def preprocess_fn(examples):
+        topic_col_data = examples["topic"]
+        context_col_data = examples["input"]
+
+        new_examples = {
+            "input": [],
+            "output": []
+        }
+        for topic, raw_context in zip(topic_col_data, context_col_data):
+            lines = raw_context.split("\n")
+            bkg = bkg_template.format(topic=topic)
+
+            if not lines[0].startswith(human_symbol) and not lines[0].startswith(ai_symbol):
+                # drop dataset's original conversation background
+                lines = lines[1:]
+            if not lines[-1].replace(human_symbol, "").strip() or not lines[-1].replace(ai_symbol, "").strip():
+                lines = lines[:-1]
+            if not lines[-1].startswith(ai_symbol):
+                lines = lines[:-1]
+
+            utterances = []
+            for line in lines[: -1]:
+                if line.startswith(human_symbol):
+                    utterances.append(input_prefix + line[len(human_symbol):].strip())
+                elif line.startswith(ai_symbol):
+                    utterances.append(output_prefix + line[len(ai_symbol):].strip())
+                else:
+                    utterances[-1] = utterances[-1] + f" {line.strip()}"
+
+            bkg = instruction_prefix + bkg + spliter
+            if random.uniform(0, 1) <= 0.5:
+                bkg = ""
+            new_examples["input"].append(
+                bkg + spliter.join(utterances[: max_utterances]) + spliter + output_prefix
+            )
+            new_examples["output"].append(" " + lines[-1][len(ai_symbol):].strip())
+
+        return new_examples
+
+    if not tokenizer:
+        tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path, use_fast=use_fast_tokenizer)
+        if not tokenizer.pad_token_id:
+            tokenizer.pad_token_id = tokenizer.eos_token_id
+
+    ds = load_baize_chat()
     n_proc = cpu_count() - 2
     ds = ds.map(
         make_data_block,
@@ -359,7 +513,7 @@ def build_instruction_following_dataset(
             "sample_max_len": sample_max_len,
             "block_max_len": block_max_len,
             "add_eos_token": add_eos_token,
-            "truncate_prompt": False,
+            "truncate_prompt": True,
             "merge_prompt_label": not for_inference
         }
     )
@@ -384,23 +538,63 @@ def build_dataset(
     processor=None,
     tokenizer=None,
     use_fast_tokenizer: bool = False,
-    instruction_prefix: str = "Instruction: ",
-    input_prefix: str = "Input: ",
-    output_prefix: str = "Output: ",
+    task_type_prefix: str = "<|TASK_TYPE|> ",
+    instruction_prefix: str = "<|SYSTEM|> ",
+    input_prefix: str = "<|USER|> ",
+    output_prefix: str = "<|ASSISTANT|> ",
     spliter: str = "\n\n",
     caption_instruction: str = "describe the image",
+    chat_utterance_max_num: int = 20,
     image_caption_sample_max_len: int = 256,
     image_caption_block_max_len: int = 256,
     instruction_following_sample_max_len: int = 1024,
     instruction_following_block_max_len: int = 1024,
+    chat_sample_max_len: int = 1024,
+    chat_block_max_len: int = 1024,
     add_eos_token: bool = False,
     seed: int = 1024,
     num_image_caption_train_samples: int = 50000,
     num_image_caption_eval_samples: int = 5000,
     num_instruction_following_train_blocks: int = 10000,
     num_instruction_following_eval_blocks: int = 1000,
+    num_chat_train_blocks: int = 10000,
+    num_chat_eval_blocks: int = 1000,
     for_inference: bool = False
 ):
+    instruction_following_train_ds, instruction_following_validation_ds = build_instruction_following_dataset(
+        pretrained_model_name_or_path=pretrained_language_model_name_or_path,
+        tokenizer=tokenizer,
+        task_type_prefix=task_type_prefix,
+        instruction_prefix=instruction_prefix,
+        input_prefix=input_prefix,
+        output_prefix=output_prefix,
+        spliter=spliter,
+        sample_max_len=instruction_following_sample_max_len,
+        block_max_len=instruction_following_block_max_len,
+        add_eos_token=add_eos_token,
+        use_fast_tokenizer=use_fast_tokenizer,
+        seed=seed,
+        num_train_blocks=num_instruction_following_train_blocks,
+        num_eval_blocks=num_instruction_following_eval_blocks,
+        for_inference=for_inference
+    )
+    baize_chat_train_ds, baize_chat_validation_ds = build_baize_chat_dataset(
+        pretrained_model_name_or_path=pretrained_language_model_name_or_path,
+        tokenizer=tokenizer,
+        spliter=spliter,
+        max_utterances=chat_utterance_max_num,
+        instruction_prefix=instruction_prefix,
+        input_prefix=input_prefix,
+        output_prefix=output_prefix,
+        sample_max_len=chat_sample_max_len,
+        block_max_len=chat_block_max_len,
+        add_eos_token=add_eos_token,
+        use_fast_tokenizer=use_fast_tokenizer,
+        seed=seed,
+        num_train_blocks=num_chat_train_blocks,
+        num_eval_blocks=num_chat_eval_blocks,
+        for_inference=for_inference
+    )
     image_caption_train_ds, image_caption_validation_ds = build_image_caption_dataset(
         pretrained_language_model_name_or_path=pretrained_language_model_name_or_path,
         pretrained_vision_model_name_or_path=pretrained_vision_model_name_or_path,
@@ -419,24 +613,12 @@ def build_dataset(
         num_eval_samples=num_image_caption_eval_samples,
         for_inference=for_inference
     )
-    instruction_following_train_ds, instruction_following_validation_ds = build_instruction_following_dataset(
-        pretrained_model_name_or_path=pretrained_language_model_name_or_path,
-        tokenizer=tokenizer,
-        instruction_prefix=instruction_prefix,
-        input_prefix=input_prefix,
-        output_prefix=output_prefix,
-        spliter=spliter,
-        sample_max_len=instruction_following_sample_max_len,
-        block_max_len=instruction_following_block_max_len,
-        add_eos_token=add_eos_token,
-        use_fast_tokenizer=use_fast_tokenizer,
-        seed=seed,
-        num_train_blocks=num_instruction_following_train_blocks,
-        num_eval_blocks=num_instruction_following_eval_blocks,
-        for_inference=for_inference
-    )
 
-    train_ds = concatenate_datasets([image_caption_train_ds, instruction_following_train_ds]).shuffle(seed=seed)
-    validation_ds = concatenate_datasets([image_caption_validation_ds, instruction_following_validation_ds])
+    train_ds = concatenate_datasets(
+        [image_caption_train_ds, instruction_following_train_ds, baize_chat_train_ds]
+    ).shuffle(seed=seed)
+    validation_ds = concatenate_datasets(
+        [image_caption_validation_ds, instruction_following_validation_ds, baize_chat_validation_ds]
+    )
 
     return train_ds, validation_ds
