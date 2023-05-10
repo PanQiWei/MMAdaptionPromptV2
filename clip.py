@@ -83,7 +83,7 @@ class ClipAdaptionPromptV2ForMultiModalConditionalGeneration(nn.Module):
         outputs = self.language_model(
             input_ids=None,
             attention_mask=attention_mask,
-            position_ids=position_ids,
+            position_ids=None,
             inputs_embeds=inputs_embeds,
             labels=labels
         )
@@ -111,6 +111,8 @@ class ClipAdaptionPromptV2ForMultiModalConditionalGeneration(nn.Module):
             inputs["inputs_embeds"] = torch.cat([image_embeds, text_embeds], dim=1)
             inputs["attention_mask"] = torch.cat([image_attention_mask, inputs["attention_mask"]], dim=1)
         inputs["input_ds"] = None
+        if "position_ids" in inputs:
+            del inputs["position_ids"]
 
         return inputs
 
@@ -161,6 +163,7 @@ class ClipAdaptionPromptV2ForMultiModalConditionalGeneration(nn.Module):
             pretrained_vision_model_name_or_path,
             **vision_model_loading_kwargs
         )
+        vision_model.to(language_model.device)
 
         model = cls(language_model, vision_model)
         model.visual_projection.load_state_dict(
@@ -169,6 +172,8 @@ class ClipAdaptionPromptV2ForMultiModalConditionalGeneration(nn.Module):
                 map_location=next(iter(model.visual_projection.parameters())).device
             ),
         )
+
+        return model
 
     @classmethod
     def build_model_for_train(
@@ -199,6 +204,7 @@ class ClipAdaptionPromptV2ForMultiModalConditionalGeneration(nn.Module):
             pretrained_vision_model_name_or_path,
             **vision_model_loading_kwargs
         )
+        vision_model.to(language_model.device)
         if vision_model_loading_kwargs.get("load_in_8bit", True):
             vision_model = prepare_model_for_int8_training(vision_model, hf_train_args.gradient_checkpointing)
         model = cls(
