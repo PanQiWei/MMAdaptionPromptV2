@@ -2,6 +2,7 @@ import copy
 import json
 import random
 import shutil
+from functools import partial
 from multiprocessing import cpu_count
 from os.path import dirname
 from typing import *
@@ -342,11 +343,11 @@ def build_instruction_following_dataset(
 ):
     random.seed(seed)
 
-    def preprocess_fn(examples):
-        instruction_data = examples["instruction"]
-        input_data = examples["input"]
-        output_data = examples["output"]
-        task_type_data = examples.get("task_type", [None for _ in range(len(instruction_data))])
+    def preprocess_fn(examples, instruction_col, input_col, output_col, task_type_col):
+        instruction_data = examples[instruction_col]
+        input_data = examples[input_col]
+        output_data = examples[output_col]
+        task_type_data = examples.get(task_type_col, [None for _ in range(len(instruction_data))])
 
         new_examples = {
             "input": [],
@@ -384,7 +385,13 @@ def build_instruction_following_dataset(
             "prompt_col_name": "input",
             "label_col_name": "output",
             "tokenizer": tokenizer,
-            "preprocess_fn": preprocess_fn,
+            "preprocess_fn": partial(
+                preprocess_fn,
+                instruction_col="instruction",
+                input_col="input",
+                output_col="output",
+                task_type_col="task_type"
+            ),
             "sample_max_len": sample_max_len,
             "block_max_len": block_max_len,
             "add_eos_token": add_eos_token,
@@ -404,7 +411,13 @@ def build_instruction_following_dataset(
             "prompt_col_name": "input",
             "label_col_name": "output",
             "tokenizer": tokenizer,
-            "preprocess_fn": preprocess_fn,
+            "preprocess_fn": partial(
+                preprocess_fn,
+                instruction_col="instruction",
+                input_col="context",
+                output_col="response",
+                task_type_col="task_type"
+            ),
             "sample_max_len": sample_max_len,
             "block_max_len": block_max_len,
             "add_eos_token": add_eos_token,
