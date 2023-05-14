@@ -131,8 +131,8 @@ class ClipAdaptionPromptV2ForMultiModalConditionalGeneration(nn.Module):
             past_key_values=past_key_values,
             attention_mask=attention_mask
         )
-        kwargs.update(inputs)
-        return self.language_model.generate(**kwargs)
+        inputs = {k: v for k, v in inputs.items() if v is not None}
+        return self.language_model.generate(**inputs, **kwargs)
 
     def save_pretrained(self, save_dir: str):
         makedirs(save_dir, exist_ok=True)

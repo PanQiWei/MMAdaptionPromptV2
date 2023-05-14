@@ -4,7 +4,7 @@ from functools import partial
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
-from transformers import AutoProcessor, AutoTokenizer, PreTrainedTokenizer
+from transformers import AutoProcessor, AutoTokenizer, PreTrainedTokenizer, GenerationConfig
 
 from clip import ClipAdaptionPromptV2ForMultiModalConditionalGeneration
 from data import build_dataset, collate_data
@@ -61,7 +61,18 @@ def inference():
                 if k == "pixel_values":
                     v = v.to(torch.float16)
                 batch[k] = v.to(model.vision_model.device)
-        outputs = model.generate(**batch, **{"num_beams": 1, "max_new_tokens": 64, "do_sample": False})
+        outputs = model.generate(
+            input_ids=batch["input_ids"],
+            pixel_values=batch["pixel_values"],
+            attention_mask=batch["attention_mask"],
+            generation_config=GenerationConfig(
+                num_beams=1,
+                max_new_tokens=64,
+                do_sample=False,
+                eos_token_id=tokenizer.eos_token_id,
+                pad_token_id=tokenizer.pad_token_id
+            )
+        )
         outputs = tokenizer.batch_decode(outputs, clean_up_tokenization_spaces=True)
         for label, output in zip(labels, outputs):
             print(f"label: {label.lstrip('</s>').strip()}")
