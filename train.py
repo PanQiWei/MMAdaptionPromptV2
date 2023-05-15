@@ -83,7 +83,8 @@ def train():
             adapter_layers=30,
             add_bias=True,
             add_scale=True,
-            multi_modal=True
+            multi_modal=True,
+            supported_modals=["vision"]
         ),
         language_model_loading_kwargs={"load_in_8bit": False, "low_cpu_mem_usage": True, "device_map": "auto", "torch_dtype": torch.float16},
         vision_model_loading_kwargs={"load_in_8bit": False, "low_cpu_mem_usage": True, "torch_dtype": torch.float16},

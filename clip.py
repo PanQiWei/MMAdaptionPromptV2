@@ -18,6 +18,7 @@ class ClipAdaptionPromptV2ForMultiModalConditionalGeneration(nn.Module):
         super(ClipAdaptionPromptV2ForMultiModalConditionalGeneration, self).__init__()
         assert language_model._enabled
         assert language_model._configs[language_model._active_adapter].multi_modal
+        assert "vision" in language_model._configs[language_model._active_adapter].supported_modals
         self.language_model = language_model
         self.vision_model = vision_model
         self.visual_projection = nn.Linear(
@@ -77,8 +78,8 @@ class ClipAdaptionPromptV2ForMultiModalConditionalGeneration(nn.Module):
                 labels = torch.cat([image_attention_mask * -100, labels], dim=1)
 
         if train_mode:
-            self.language_model.freeze_adaption_params(pixel_values is not None)
-            self.language_model.unfreeze_adaption_params(pixel_values is None)
+            self.language_model.freeze_adaption_params(None if pixel_values is not None else "vision")
+            self.language_model.unfreeze_adaption_params(None if pixel_values is None else "vision")
 
         outputs = self.language_model(
             input_ids=None,
